@@ -71,16 +71,20 @@ def analyze_csv(csv_bytes, history=[]):
         
         csv_text = "\n".join([",".join(row) for row in rows[:50]])
         
-        # Note: genai.configure must be called before this
         model = genai.GenerativeModel('gemini-2.0-flash-exp')
         
         history_str = "\n".join([f"- {h['counterparty']} ({h['memo']}) => {h['account']}" for h in history]) if history else "なし"
         
         prompt = f"""
-        あなたは優秀な会計士です。明細データから仕訳を作成してください。
-        
+        あなたは優秀な会計士です。明細データ（CSV）から仕訳を作成してください。
+        このCSVは主に「クレジットカード利用明細」または「銀行入出金」です。
+
+        ルール:
+        1. **クレジットカード明細の場合**、貸方勘定科目は原則として「**未払金**」を使用してください。
+        2. **銀行口座のCSVの場合**、貸方または借方は「普通預金」などが適切です。
+        3. 過去の履歴を参考に、最適な勘定科目を選んでください。
+
         過去の仕訳履歴（参考）：
-        同じ取引先でも「摘要（メモ）」の内容が似ている場合は、過去と同じ「借方勘定科目」を割り当ててください。
         {history_str}
 
         JSON形式（配列）で出力：
@@ -117,17 +121,24 @@ def get_existing_entries(spreadsheet_id, access_token):
              return set()
 
         sh = client.open_by_key(spreadsheet_id)
-        sheet = sh.worksheet("仕訳明細")
-        data = sheet.get_all_values()
         
+        # Check both Auto and Manual sheets
         existing = set()
-        if len(data) > 1:
-            for row in data[1:]:
-                if len(row) >= 5:
-                    date = row[0].strip()
-                    amount = str(row[3]).strip()
-                    counterparty = row[4].strip()
-                    existing.add(f"{date}_{amount}_{counterparty}")
+        
+        for sheet_name in ["仕訳明細", "仕訳明細（手入力）"]:
+            try:
+                sheet = sh.worksheet(sheet_name)
+                data = sheet.get_all_values()
+                if len(data) > 1:
+                    for row in data[1:]:
+                        if len(row) >= 5:
+                            date = row[0].strip()
+                            amount = str(row[3]).strip()
+                            counterparty = row[4].strip()
+                            existing.add(f"{date}_{amount}_{counterparty}")
+            except:
+                pass # Sheet might not exist yet
+                
         return existing
     except Exception as e:
         print(f"Error fetching existing entries: {e}")
@@ -146,8 +157,15 @@ def analyze_document(file_bytes, mime_type, history=[]):
             
             prompt = f"""
             あなたは日本の税務・会計士です。
-            渡されたドキュメント（レシート、領収書、またはクレジットカードの利用明細書）から仕訳を作成してください。
+            渡された画像の「領収書（レシート）」または「請求書」から仕訳を作成してください。
             
+            **重要：決済方法の判定**
+            画像内の支払情報を確認し、貸方勘定科目を以下のように決定してください：
+            - **クレジットカード払い、カード利用、VISA/JCB/Master等の記載がある場合** → 「**未払金**」
+            - **電子マネー（PayPay, Suica等）、後払い決済の場合** → 「**未払金**」
+            - 現金、Cash、または支払方法の記載がない場合 → 「現金」（または「小口現金」）
+            - 銀行振込の請求書の場合 → 「買掛金」または「未払金」
+
             履歴（優先）:
             {history_str}
 
@@ -156,7 +174,7 @@ def analyze_document(file_bytes, mime_type, history=[]):
               {{
                 "date": "YYYY-MM-DD",
                 "debit_account": "借方勘定科目",
-                "credit_account": "貸方勘定科目",
+                "credit_account": "貸方勘定科目（未払金/現金/買掛金など）",
                 "amount": 数値,
                 "counterparty": "取引先名",
                 "memo": "詳細・摘要"
@@ -203,14 +221,12 @@ def save_to_sheets(data, spreadsheet_id, access_token):
 
         sh = client.open_by_key(spreadsheet_id)
         
-        # --- Sheet 1: 仕訳明細 ---
+        # --- Sheet 1: 仕訳明細 (Auto) ---
         try:
-            sheet1 = sh.get_worksheet(0)
-            if sheet1.title != "仕訳明細":
-                sheet1.update_title("仕訳明細")
+            sheet1 = sh.worksheet("仕訳明細")
         except:
             sheet1 = sh.add_worksheet(title="仕訳明細", rows="1000", cols="6")
-
+            
         headers = ["日にち", "借方", "貸方", "金額", "取引先", "摘要（内容）"]
         existing_values = sheet1.get_all_values()
         
@@ -221,21 +237,48 @@ def save_to_sheets(data, spreadsheet_id, access_token):
             if not any(existing_values[0]):
                  sheet1.update('A1', [headers])
                  sheet1.freeze(rows=1)
-            else:
-                sheet1.insert_row(headers, index=1)
-                sheet1.freeze(rows=1)
 
-        # --- Sheet 2: 損益計算書 (P&L) ---
+        # --- Sheet 1.5: 仕訳明細（手入力） ---
         try:
-            sheet2 = sh.worksheet("損益計算書")
-        except gspread.exceptions.WorksheetNotFound:
-            sheet2 = sh.add_worksheet(title="損益計算書", rows="100", cols="10")
-            sheet2.update('A1', [["勘定科目別 集計表 (提出用参考)"]])
-            sheet2.update('A3', [["勘定科目", "合計金額"]])
-            formula = "=QUERY('仕訳明細'!A:F, \"select B, sum(D) where B != '' and B != '借方' group by B label sum(D) ''\", 1)"
-            sheet2.update('A4', [[formula]], value_input_option='USER_ENTERED')
-            sheet2.freeze(rows=3)
+            sheet_manual = sh.worksheet("仕訳明細（手入力）")
+        except:
+            sheet_manual = sh.add_worksheet(title="仕訳明細（手入力）", rows="1000", cols="6")
+            sheet_manual.append_row(headers)
+            sheet_manual.freeze(rows=1)
 
+        # --- Sheet 2: 損益計算書 (P/L) ---
+        try:
+            sheet_pl = sh.worksheet("損益計算書")
+        except gspread.exceptions.WorksheetNotFound:
+            sheet_pl = sh.add_worksheet(title="損益計算書", rows="100", cols="10")
+        
+        # P/L Layout Reconstruction
+        sheet_pl.clear()
+        sheet_pl.update('A1', [["損益計算書 (P/L) - 月次推移なし・全体集計"]])
+        sheet_pl.update('A3', [["【借方（費用・資産増加）】", "金額", "", "【貸方（収益・負債増加）】", "金額"]])
+        
+        # Formula for Debits (Expenses) - Aggregating from BOTH sheets
+        debit_formula = "=QUERY({'仕訳明細'!A2:F; '仕訳明細（手入力）'!A2:F}, \"select Col2, sum(Col4) where Col2 is not null group by Col2 label sum(Col4) ''\", 0)"
+        sheet_pl.update_acell('A4', debit_formula)
+        
+        # Formula for Credits (Revenue) - Aggregating from BOTH sheets
+        credit_formula = "=QUERY({'仕訳明細'!A2:F; '仕訳明細（手入力）'!A2:F}, \"select Col3, sum(Col4) where Col3 is not null group by Col3 label sum(Col4) ''\", 0)"
+        sheet_pl.update_acell('D4', credit_formula)
+        
+        sheet_pl.freeze(rows=3)
+        
+        # --- Sheet 3: 貸借対照表 (B/S) ---
+        try:
+            sheet_bs = sh.worksheet("貸借対照表")
+        except:
+            sheet_bs = sh.add_worksheet(title="貸借対照表", rows="100", cols="6")
+            sheet_bs.update('A1', [["簡易貸借対照表 (B/S)"]])
+            sheet_bs.update('A3', [["勘定科目", "借方合計", "貸方合計", "残高 (資産は正/負債は負)"]])
+            
+            # Simple aggregation for B/S reference
+            sheet_bs.update('A4', [["※P/Lと同様に、仕訳明細から集計を行います。詳細なB/S作成には期首残高が必要です。"]])
+
+        # データの書き込み (仕訳明細へ)
         rows = []
         for item in data:
             rows.append([
@@ -325,3 +368,4 @@ def api_save():
 
 if __name__ == '__main__':
     app.run(debug=True, port=5001)
+

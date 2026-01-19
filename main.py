@@ -379,10 +379,53 @@ def save_to_sheets(data, spreadsheet_id, access_token):
             sheet_bs = sh.add_worksheet(title="貸借対照表", rows="100", cols="6")
         
         sheet_bs.clear()
-        sheet_bs.update("A1", [["貸借対照表 (B/S) - 資産・負債残高"]])
+        sheet_bs.update("A1", [["貸借対照表 (B/S)"]])
         sheet_bs.update("A2", [["※期首残高 ＋ (借方合計 - 貸方合計) で算出"]])
-        sheet_bs.update("A4", [["科目", "現在残高"]])
-        sheet_bs.update("A5", [["※P/Lと同様に、仕訳明細から集計を行います。"]])
+        
+        # Organize Accounts by Type
+        assets = []
+        liabilities = []
+        equity = []
+        
+        # DEFAULT_ACCOUNTS structure: [Name, Type]
+        # Types: 資産, 負債, 純資産, 収益, 費用
+        for row in DEFAULT_ACCOUNTS[1:]:
+            name, type_ = row[0], row[1]
+            if type_ == "資産": assets.append(name)
+            elif type_ == "負債": liabilities.append(name)
+            elif type_ == "純資産": equity.append(name)
+            
+        bs_rows = []
+        bs_rows.append(["【資産の部】", "金額"])
+        for acc in assets:
+            # Asset: Open + (Debit - Credit)
+            # D=Amount(Col4), B=Debit(Col2), C=Credit(Col3)
+            # Need to handle '仕訳明細' and '仕訳明細（手入力）'
+            f = f"=SUMIF('期首残高'!A:A, \"{acc}\", '期首残高'!B:B) + (SUMIF('仕訳明細'!B:B, \"{acc}\", '仕訳明細'!D:D) + SUMIF('仕訳明細（手入力）'!B:B, \"{acc}\", '仕訳明細（手入力）'!D:D)) - (SUMIF('仕訳明細'!C:C, \"{acc}\", '仕訳明細'!D:D) + SUMIF('仕訳明細（手入力）'!C:C, \"{acc}\", '仕訳明細（手入力）'!D:D))"
+            bs_rows.append([acc, f])
+            
+        bs_rows.append(["", ""])
+        bs_rows.append(["【負債の部】", "金額"])
+        for acc in liabilities:
+            # Liability: Open + (Credit - Debit)
+            f = f"=SUMIF('期首残高'!A:A, \"{acc}\", '期首残高'!B:B) + (SUMIF('仕訳明細'!C:C, \"{acc}\", '仕訳明細'!D:D) + SUMIF('仕訳明細（手入力）'!C:C, \"{acc}\", '仕訳明細（手入力）'!D:D)) - (SUMIF('仕訳明細'!B:B, \"{acc}\", '仕訳明細'!D:D) + SUMIF('仕訳明細（手入力）'!B:B, \"{acc}\", '仕訳明細（手入力）'!D:D))"
+            bs_rows.append([acc, f])
+
+        bs_rows.append(["", ""])
+        bs_rows.append(["【純資産の部】", "金額"])
+        for acc in equity:
+            # Equity: Open + (Credit - Debit) ... + NetIncome (complicated, let's keep basic for now)
+            # Net Income is derived from P/L usually added to Retained Earnings.
+            # strict B/S won't balance without Net Income.
+            # For this tool, we just show running balances.
+            f = f"=SUMIF('期首残高'!A:A, \"{acc}\", '期首残高'!B:B) + (SUMIF('仕訳明細'!C:C, \"{acc}\", '仕訳明細'!D:D) + SUMIF('仕訳明細（手入力）'!C:C, \"{acc}\", '仕訳明細（手入力）'!D:D)) - (SUMIF('仕訳明細'!B:B, \"{acc}\", '仕訳明細'!D:D) + SUMIF('仕訳明細（手入力）'!B:B, \"{acc}\", '仕訳明細（手入力）'!D:D))"
+            bs_rows.append([acc, f])
+
+        # Batch update logic
+        # Gspread append_rows doesn't work well for formulas mixed.
+        # Use update() with range.
+        sheet_bs.update(f"A3:B{3+len(bs_rows)}", bs_rows, value_input_option='USER_ENTERED')
+
 
         # 6. General Ledger (総勘定元帳)
         try:

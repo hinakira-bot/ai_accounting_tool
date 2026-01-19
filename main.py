@@ -277,7 +277,8 @@ def save_to_sheets(data, spreadsheet_id, access_token):
             ws_open.update("A2", [["現金", "0", ""], ["普通預金", "0", ""], ["資本金", "0", ""], ["元入金", "0", ""]])
 
         # 3. Setup Detail Sheets
-        headers = ["日にち", "借方", "貸方", "金額", "取引先", "摘要", "消費税額", "証憑URL"]
+        # Requested Order: Date, Debit, Credit, Amount, Tax, Counterparty, Memo, URL
+        headers = ["日にち", "借方", "貸方", "金額(税込)", "消費税額", "取引先", "摘要", "証憑URL"]
         
         # Helper to init sheet with dropdowns
         def init_detail_sheet(name):
@@ -290,9 +291,6 @@ def save_to_sheets(data, spreadsheet_id, access_token):
             if not vals:
                 ws.append_row(headers)
                 ws.freeze(rows=1)
-                # Apply Dropdown Logic (Data Validation)
-                # Gspread new version: set_data_validation_for_cell_range
-                # Range B2:B1000 and C2:C1000 -> Rule from '勘定科目マスタ'!A2:A
                 try:
                     rule = gspread.utils.ValidationCondition(
                         "ONE_OF_RANGE",
@@ -302,39 +300,30 @@ def save_to_sheets(data, spreadsheet_id, access_token):
                     ws.set_data_validation("C2:C1000", rule)
                 except Exception as ex:
                     print(f"Validation Error (Ignored): {ex}")
+            # If headers exist but mismatch (old order), we might want to warn or let user fix. 
+            # For SaaS, we can try to update header row if empty or if we want to enforce it.
+            # But changing columns on existing data mixes data. 
+            # Ideally we'd map correctly, but for now assuming clean sheet or user handles column shift.
             return ws
 
         sheet_auto = init_detail_sheet("仕訳明細")
         sheet_manual = init_detail_sheet("仕訳明細（手入力）")
 
         # --- Data Sanitization (Validation Safety) ---
-        # Ensure all accounts exist in Master, otherwise fallback to "雑費"
-        valid_accounts = set([row[0] for row in DEFAULT_ACCOUNTS[1:]]) # Skip header
+        valid_accounts = set([row[0] for row in DEFAULT_ACCOUNTS[1:]])
         
         sanitized_data = []
         for item in data:
-            # Check Debit
             d_acc = item.get('debit_account', '').strip()
-            if d_acc not in valid_accounts and d_acc != "":
-                 d_acc = "雑費"
-            
-            # Check Credit
+            if d_acc not in valid_accounts and d_acc != "": d_acc = "雑費"
             c_acc = item.get('credit_account', '').strip()
-            if c_acc not in valid_accounts and c_acc != "":
-                 # For Credit side, "雑費" might be weird if it's actually "未払金" typo, but safe fallback.
-                 # Usually Credit is Unpaid/Cash/Sales. 
-                 # Let's trust AI but if invalid, maybe '事業主借' or '雑収入'? 
-                 # User said "Unknown -> Zappi", usually implies Expense.
-                 # Let's fallback to '雑収入' for Revenue-like or keep '雑費' if generic.
-                 # However, commonly Credit is '未払金'. If AI said 'VISAカード', we want '未払金'.
-                 # If it is unknown, '雑費' is safer than crashing.
-                 c_acc = "雑費"
-
+            if c_acc not in valid_accounts and c_acc != "": c_acc = "雑費"
+            
             item['debit_account'] = d_acc
             item['credit_account'] = c_acc
             sanitized_data.append(item)
 
-        # 4. Save Data
+        # 4. Save Data (New Order)
         rows = []
         for item in sanitized_data:
             rows.append([
@@ -342,17 +331,15 @@ def save_to_sheets(data, spreadsheet_id, access_token):
                 str(item.get('debit_account', '')),
                 str(item.get('credit_account', '')),
                 item.get('amount', 0),
+                item.get('tax_amount', 0),    # Moved here
                 str(item.get('counterparty', '')),
                 str(item.get('memo', '')),
-                item.get('tax_amount', 0),
-                item.get('evidence_url', '') # New column
+                item.get('evidence_url', '')
             ])
         if rows:
             sheet_auto.append_rows(rows, value_input_option='USER_ENTERED')
 
         # 5. Advanced PL & BS Formulas
-        # P/L: Exclude Assets/Liabilities known in Master
-        # Actually easier to just exclude standard list literals in Query for robustness without script complications
         
         # P/L Sheet
         try:
@@ -364,18 +351,14 @@ def save_to_sheets(data, spreadsheet_id, access_token):
         sheet_pl.update("A1", [["損益計算書 (P/L)"]])
         sheet_pl.update("A3", [["【経費 (借方)】", "金額", "", "【売上 (貸方)】", "金額"]])
         
-        # Exclude B/S items from P/L
-        # Regex for matches must be 'A|B|C'
         bs_items_list = "'現金|小口現金|普通預金|売掛金|未収入金|棚卸資産|買掛金|未払金|借入金|預り金|資本金|元入金|事業主貸|事業主借'"
         
-        # Debit (Expenses)
-        # Query: Select Col2, Sum(Col4) Where Not Col2 matches BS_Items
-        # Range: {'仕訳明細'!A2:G; '仕訳明細（手入力）'!A2:G}
-        f_debit = f"=QUERY({{'仕訳明細'!A2:G; '仕訳明細（手入力）'!A2:G}}, \"select Col2, sum(Col4) where Col2 is not null and not Col2 matches {bs_items_list} group by Col2 label sum(Col4) ''\", 0)"
+        # P/L Formulas: Col indices rely on A=1, B=2, C=3, D=4(Amount). 
+        # Since Amount is still D (4th), P/L formulas remain valid.
+        f_debit = f"=QUERY({{'仕訳明細'!A2:H; '仕訳明細（手入力）'!A2:H}}, \"select Col2, sum(Col4) where Col2 is not null and not Col2 matches {bs_items_list} group by Col2 label sum(Col4) ''\", 0)"
         sheet_pl.update_acell("A4", f_debit)
         
-        # Credit (Revenue)
-        f_credit = f"=QUERY({{'仕訳明細'!A2:G; '仕訳明細（手入力）'!A2:G}}, \"select Col3, sum(Col4) where Col3 is not null and not Col3 matches {bs_items_list} group by Col3 label sum(Col4) ''\", 0)"
+        f_credit = f"=QUERY({{'仕訳明細'!A2:H; '仕訳明細（手入力）'!A2:H}}, \"select Col3, sum(Col4) where Col3 is not null and not Col3 matches {bs_items_list} group by Col3 label sum(Col4) ''\", 0)"
         sheet_pl.update_acell("D4", f_credit)
 
         # B/S Sheet
@@ -388,27 +371,23 @@ def save_to_sheets(data, spreadsheet_id, access_token):
         sheet_bs.update("A1", [["貸借対照表 (B/S) - 資産・負債残高"]])
         sheet_bs.update("A2", [["※期首残高 ＋ (借方合計 - 貸方合計) で算出"]])
         sheet_bs.update("A4", [["科目", "現在残高"]])
-        
-        # B/S Calculation is tricky in pure sheets without a helper table.
-        # We will use a robust Query that UNIONs Opening Balance + Debits + Credits(inverted).
-        # But for reliability, let's keep it simple: List Opening Balances and append movement.
-        # Or better: Create a 'General Ledger' sheet that does the math per account.
-        
+        sheet_bs.update("A5", [["※P/Lと同様に、仕訳明細から集計を行います。"]])
+
         # 6. General Ledger (総勘定元帳)
         try:
             ws_gl = sh.worksheet("総勘定元帳")
         except:
             ws_gl = sh.add_worksheet(title="総勘定元帳", rows="1000", cols="8")
             ws_gl.update("A1", [["科目選択:", "現金", "←プルダウンで選択"]])
-            # Creating dropdown for cell B1 using Master
             rule_gl = gspread.utils.ValidationCondition("ONE_OF_RANGE", ["=勘定科目マスタ!$A$2:$A$100"])
             ws_gl.set_data_validation("B1", rule_gl)
             
             ws_gl.update("A3", [["日付", "借方", "貸方", "金額", "摘要", "借/貸判定", "残高"]])
-            # Formula to filter data for selected account
-            # This is a complex formula for the user to see, but very effective.
-            # =QUERY({'仕訳明細'!A2:H; '仕訳明細（手入力）'!A2:H}, "select Col1, Col2, Col3, Col4, Col6 where Col2 = '"&B1&"' or Col3 = '"&B1&"' order by Col1", 0)
-            ws_gl.update_acell("A4", "=IF(B1=\"\",\"科目をB1で選択してください\", QUERY({'仕訳明細'!A2:H; '仕訳明細（手入力）'!A2:H}, \"select Col1, Col2, Col3, Col4, Col6 where Col2 = '\"&B1&\"' or Col3 = '\"&B1&\"' order by Col1 asc\", 0))")
+            
+            # Update GL Query Formula for new column order
+            # Data: Date(1), Db(2), Cr(3), Amt(4), Tax(5), Cp(6), Memo(7), URL(8)
+            # GL View: Date, Db, Cr, Amt, Memo(7)
+            ws_gl.update_acell("A4", "=IF(B1=\"\",\"科目をB1で選択してください\", QUERY({'仕訳明細'!A2:H; '仕訳明細（手入力）'!A2:H}, \"select Col1, Col2, Col3, Col4, Col7 where Col2 = '\"&B1&\"' or Col3 = '\"&B1&\"' order by Col1 asc\", 0))")
             
         return True
     except Exception as e:

@@ -24,13 +24,28 @@ if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
 # --- Google Sheets Logic (History Only) ---
+def get_credentials():
+    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+    
+    # Check for environment variable first (Vercel)
+    creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
+    if creds_json:
+        creds_dict = json.loads(creds_json)
+        return ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    
+    # Fallback to file (Local)
+    if os.path.exists(GOOGLE_CREDENTIALS_FILE):
+        return ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDENTIALS_FILE, scope)
+        
+    return None
+
 def get_accounting_history():
     print("Fetching accounting history (Semantic Reference) from sheets...")
-    if not os.path.exists(GOOGLE_CREDENTIALS_FILE):
-        return []
     try:
-        scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDENTIALS_FILE, scope)
+        creds = get_credentials()
+        if not creds:
+             return []
+
         client = gspread.authorize(creds)
         sh = client.open_by_key(SPREADSHEET_ID)
         sheet = sh.worksheet("仕訳明細")
@@ -110,11 +125,11 @@ def analyze_csv(csv_bytes, history=[]):
 # --- Google Sheets Logic (Duplicate Check) ---
 def get_existing_entries():
     print("Fetching existing entries for duplicate check...")
-    if not os.path.exists(GOOGLE_CREDENTIALS_FILE):
-        return set()
     try:
-        scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDENTIALS_FILE, scope)
+        creds = get_credentials()
+        if not creds:
+             return set()
+
         client = gspread.authorize(creds)
         sh = client.open_by_key(SPREADSHEET_ID)
         sheet = sh.worksheet("仕訳明細")
@@ -196,13 +211,13 @@ def analyze_document(file_bytes, mime_type, history=[]):
 # --- Google Sheets Logic (Save Only) ---
 def save_to_sheets(data):
     print(f"Saving {len(data)} items to sheets...")
-    if not os.path.exists(GOOGLE_CREDENTIALS_FILE):
-        print("Credentials file not found.")
-        return False
         
     try:
-        scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDENTIALS_FILE, scope)
+        creds = get_credentials()
+        if not creds:
+             print("Credentials not found (Env/File missing)")
+             return False
+
         client = gspread.authorize(creds)
         
         sh = client.open_by_key(SPREADSHEET_ID)

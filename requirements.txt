@@ -1,8 +1,9 @@
 google-generativeai
 gspread
-oauth2client
+google-auth
 flask
 flask-cors
 python-dotenv
 pillow
+google-api-python-client
 google-auth

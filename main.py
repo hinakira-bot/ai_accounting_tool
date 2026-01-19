@@ -148,6 +148,8 @@ def get_analysis_prompt(history_str, input_text_or_type):
     6. **摘要 (Memo)**:
         - **最重要**: 過去の履歴（下記）に類似の取引先がある場合、その「摘要」を極力踏襲してください。
         - 履歴がなく内容が不明確な場合は、無理に推測せず「勘定科目名」（例：消耗品費）または「空欄」にしてください。
+    7. **判断不能な場合**:
+        - 勘定化目が全く分からない、事業用か不明、といった場合は「**雑費**」として処理してください。
 
     【過去の学習データ (取引先: 摘要 => 科目)】
     {history_str}
@@ -156,7 +158,7 @@ def get_analysis_prompt(history_str, input_text_or_type):
     [
       {{
         "date": "YYYY-MM-DD",
-        "debit_account": "借方勘定科目",
+        "debit_account": "借方勘定科目(不明なら雑費)",
         "credit_account": "貸方勘定科目",
         "amount": 税込金額(数値),
         "tax_amount": 消費税額(数値・推定),
@@ -305,9 +307,36 @@ def save_to_sheets(data, spreadsheet_id, access_token):
         sheet_auto = init_detail_sheet("仕訳明細")
         sheet_manual = init_detail_sheet("仕訳明細（手入力）")
 
+        # --- Data Sanitization (Validation Safety) ---
+        # Ensure all accounts exist in Master, otherwise fallback to "雑費"
+        valid_accounts = set([row[0] for row in DEFAULT_ACCOUNTS[1:]]) # Skip header
+        
+        sanitized_data = []
+        for item in data:
+            # Check Debit
+            d_acc = item.get('debit_account', '').strip()
+            if d_acc not in valid_accounts and d_acc != "":
+                 d_acc = "雑費"
+            
+            # Check Credit
+            c_acc = item.get('credit_account', '').strip()
+            if c_acc not in valid_accounts and c_acc != "":
+                 # For Credit side, "雑費" might be weird if it's actually "未払金" typo, but safe fallback.
+                 # Usually Credit is Unpaid/Cash/Sales. 
+                 # Let's trust AI but if invalid, maybe '事業主借' or '雑収入'? 
+                 # User said "Unknown -> Zappi", usually implies Expense.
+                 # Let's fallback to '雑収入' for Revenue-like or keep '雑費' if generic.
+                 # However, commonly Credit is '未払金'. If AI said 'VISAカード', we want '未払金'.
+                 # If it is unknown, '雑費' is safer than crashing.
+                 c_acc = "雑費"
+
+            item['debit_account'] = d_acc
+            item['credit_account'] = c_acc
+            sanitized_data.append(item)
+
         # 4. Save Data
         rows = []
-        for item in data:
+        for item in sanitized_data:
             rows.append([
                 str(item.get('date', '')),
                 str(item.get('debit_account', '')),

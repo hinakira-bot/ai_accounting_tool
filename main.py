@@ -737,58 +737,30 @@ def save_to_sheets(data, spreadsheet_id, access_token):
              header = ["勘定科目"] + months + ["合計"]
              ws_monthly.update("A1", [header])
              
-             # Rows
-             ac_names = [row[0] for row in DEFAULT_ACCOUNTS[1:]] # Skip header
-             m_data = []
+             # Compromise: Monthly P&L Report (Revenue & Expenses)
+             # Filter based on Master Account Types
+             revenue_accs = [r[0] for r in DEFAULT_ACCOUNTS if r[1] == '収益']
+             expense_accs = [r[0] for r in DEFAULT_ACCOUNTS if r[1] == '費用']
              
-             for ac in ac_names:
-                 # Row Formula: SUMIFS(Amount, Account=ac, Date>=Start, Date<End)
-                 # Note: Standard Fiscal Year in Japan starts April.
-                 # Optimization: Creating 12 formulas per row is heavy.
-                 # Let's use QUERY pivot if possible? 
-                 # Pivot by Month(Date) is tricky in Query without extra column.
-                 
-                 # Let's stick to simple SUMIFS for reliability.
-                 # We need to construct the range references.
-                 # '仕訳明細'!D:D (Amount), '仕訳明細'!B:B (Debit)=AC - '仕訳明細'!C:C (Credit)=AC?
-                 # Wait, for P/L expenses (Debit dominant), it's Debit - Credit.
-                 # For Sales (Credit dominant), it's Credit - Debit.
-                 # This "Sign" logic is complex. 
-                 # Simplified approach: Net Movement (Debit - Credit)
-                 # If negative, it means credit balance.
-                 
-                 # Formula for April (Month 4):
-                 # =SUMIFS('仕訳明細'!Amount, '仕訳明細'!Debit, AC, '仕訳明細'!Month, 4) ... 
-                 # Generating detailed formulas for each cell is too slow via API (100 rows * 12 cols = 1200 updates).
-                 # Better approach: 
-                 # Use QUERY on a hidden sheet that pre-calculates month, then Pivot.
-                 # OR: Just set up the sheet ONCE with array formulas? 
-                 # Let's insert the account list in Col A, and use a draggable formula in Row 2.
-                 
-                 m_data.append([ac])
+             rev_regex = "|".join(revenue_accs)
+             exp_regex = "|".join(expense_accs)
              
-             ws_monthly.update(f"A2:A{1+len(m_data)}", m_data)
+             ws_monthly.update_acell("A1", "■ 月次推移表（損益計算書項目のみ）")
              
-             # Inject Array Formula in B2 (Example for April)
-             # But ArrayFormula across months is hard.
+             # Table 1: Revenue (Credit Side Analysis)
+             # select Col3(CreditAccount), sum(Col4)(Amount) where Col3 matches '...'. Pivot by Month.
+             q_rev = f"=QUERY({{'仕訳明細'!A2:H; '仕訳明細（手入力）'!A2:H}}, \"select Col3, sum(Col4) where Col3 matches '{rev_regex}' group by Col3 pivot month(Col1)+1 label Col3 '売上・収益科目'\", 0)"
+             ws_monthly.update_acell("A3", "【収益の部】")
+             ws_monthly.update_acell("A4", q_rev)
              
-             # Fallback: Just put the Account list.
-             # User can use the "General Ledger" for details. 
-             # OR: Let's produce a simple "By Month" query for the whole dataset.
-             # =QUERY({Data}, "select Col2, sum(Col4) group by Col2 pivot month(Col1)+1 label Col2 '科目'", 1)
-             # But month() returns 0-11 or 1-12? Query month() is 0-based (0=Jan).
+             # Table 2: Expenses (Debit Side Analysis)
+             # select Col2(DebitAccount), sum(Col4)(Amount) where Col2 matches '...'. Pivot by Month.
+             q_exp = f"=QUERY({{'仕訳明細'!A2:H; '仕訳明細（手入力）'!A2:H}}, \"select Col2, sum(Col4) where Col2 matches '{exp_regex}' group by Col2 pivot month(Col1)+1 label Col2 '費用・損失科目'\", 0)"
+             ws_monthly.update_acell("A15", "【費用の部】")
+             ws_monthly.update_acell("A16", q_exp)
              
-             # Let's try the Pivot Query. It's the most powerful feature.
-             # We need to normalize dates first. 
-             # QUERY(..., "select Col2, sum(Col4) pivot month(Col1)")
-             # Problem: 'Col2' is Debit Account. We need to merge Debit and Credit side.
-             # This is hard in one query.
-             
-             # Compromise: Create a simple "Monthly Debit Summary" (Spending per month).
-             # Focus on Expenses (Debit Side).
-             q = "=QUERY({'仕訳明細'!A2:H; '仕訳明細（手入力）'!A2:H}, \"select Col2, sum(Col4) where Col2 is not null group by Col2 pivot month(Col1)+1\", 0)"
-             ws_monthly.update_acell("E1", "※経費・資産の月次推移 (借方集計)")
-             ws_monthly.update_acell("E2", q)
+             # Clear old legacy artifact if exists
+             ws_monthly.update("E1:E2", [["", ""]])
              
         except Exception as e:
             print(f"Monthly Report Error: {e}")

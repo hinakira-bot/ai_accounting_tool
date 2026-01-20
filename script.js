@@ -438,11 +438,24 @@ document.addEventListener('DOMContentLoaded', () => {
         sendBtn.disabled = true;
         sendBtn.textContent = '送信中...';
 
+        // Filter out rows with Amount 0 or empty
+        const validData = extractedData.filter(item => {
+            const val = parseInt(item.amount);
+            return !isNaN(val) && val !== 0;
+        });
+
+        if (validData.length === 0) {
+            alert("金額が0円以外のデータがありません。保存を中止します。");
+            sendBtn.disabled = false;
+            sendBtn.textContent = 'スプレッドシートに書き込む';
+            return;
+        }
+
         fetch('/api/save', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                data: extractedData,
+                data: validData,
                 gemini_api_key: apiKey,
                 spreadsheet_id: sheetId,
                 access_token: accessToken

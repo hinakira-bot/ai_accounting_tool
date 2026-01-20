@@ -317,9 +317,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- Auto Predict Logic ---
+    // --- Auto Predict Logic ---
     const autoPredictBtn = document.getElementById('auto-predict-btn');
     if (autoPredictBtn) {
         autoPredictBtn.addEventListener('click', () => {
+            // FORCE SYNC: Update extractedData from DOM
+            const inputs = resultsTable.querySelectorAll('input');
+            inputs.forEach(input => {
+                const idx = parseInt(input.dataset.index);
+                const key = input.dataset.key;
+                if (!isNaN(idx) && key && extractedData[idx]) {
+                    extractedData[idx][key] = input.value;
+                }
+            });
+
             // 1. Find targets (Legacy: Both empty OR New: One Empty)
             // We want rows where at least one account is empty, AND prompt info is available.
             const targets = extractedData.map((item, idx) => ({ ...item, index: idx }))

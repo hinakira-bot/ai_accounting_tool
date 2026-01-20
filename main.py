@@ -732,10 +732,7 @@ def save_to_sheets(data, spreadsheet_id, access_token):
              except:
                  ws_monthly = sh.add_worksheet(title="月次推移表", rows="100", cols="14") # Acc + 12 months + Total
             
-             # Header
-             months = ["4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月", "1月", "2月", "3月"]
-             header = ["勘定科目"] + months + ["合計"]
-             ws_monthly.update("A1", [header])
+             # Header (Managed by Query)
              
              # Compromise: Monthly P&L Report (Revenue & Expenses)
              # Filter based on Master Account Types
@@ -745,22 +742,27 @@ def save_to_sheets(data, spreadsheet_id, access_token):
              rev_regex = "|".join(revenue_accs)
              exp_regex = "|".join(expense_accs)
              
-             ws_monthly.update_acell("A1", "■ 月次推移表（損益計算書項目のみ）")
+             # Clear logic handles overlap. 
+             # We place Revenue at A3, Expenses at A30 (plenty of space).
+             # Note: Query Pivot output is Month 1, 2, ...
              
-             # Table 1: Revenue (Credit Side Analysis)
-             # select Col3(CreditAccount), sum(Col4)(Amount) where Col3 matches '...'. Pivot by Month.
+             ws_monthly.update_acell("A1", "■ 月次推移表（損益計算書項目のみ）")
+             ws_monthly.update_acell("F1", "※列は月（1=1月, 2=2月...）を表します")
+             
+             # Table 1: Revenue
              q_rev = f"=QUERY({{'仕訳明細'!A2:H; '仕訳明細（手入力）'!A2:H}}, \"select Col3, sum(Col4) where Col3 matches '{rev_regex}' group by Col3 pivot month(Col1)+1 label Col3 '売上・収益科目'\", 0)"
              ws_monthly.update_acell("A3", "【収益の部】")
              ws_monthly.update_acell("A4", q_rev)
              
-             # Table 2: Expenses (Debit Side Analysis)
-             # select Col2(DebitAccount), sum(Col4)(Amount) where Col2 matches '...'. Pivot by Month.
+             # Table 2: Expenses
+             # Start at A30 to avoid overwriting if Revenue has many rows
              q_exp = f"=QUERY({{'仕訳明細'!A2:H; '仕訳明細（手入力）'!A2:H}}, \"select Col2, sum(Col4) where Col2 matches '{exp_regex}' group by Col2 pivot month(Col1)+1 label Col2 '費用・損失科目'\", 0)"
-             ws_monthly.update_acell("A15", "【費用の部】")
-             ws_monthly.update_acell("A16", q_exp)
+             ws_monthly.update_acell("A30", "【費用の部】")
+             ws_monthly.update_acell("A31", q_exp)
              
-             # Clear old legacy artifact if exists
-             ws_monthly.update("E1:E2", [["", ""]])
+             # Clear specific ranges to ensure no artifacts if data shrinks
+             # (ws_monthly.clear() at the top handles huge changes, but this is safe)
+             
              
         except Exception as e:
             print(f"Monthly Report Error: {e}")

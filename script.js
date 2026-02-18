@@ -112,6 +112,8 @@ document.addEventListener('DOMContentLoaded', () => {
         // Trigger data loading for specific tabs
         if (tabId === 'journal-book') loadJournalBook();
         if (tabId === 'trial-balance') loadTrialBalance();
+        if (tabId === 'balance-sheet') loadBalanceSheet();
+        if (tabId === 'profit-loss') loadProfitLoss();
     }
 
     tabNav.addEventListener('click', (e) => {
@@ -746,65 +748,38 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        // Group by account_type
-        const groups = {};
-        const typeOrder = ['資産', '負債', '純資産', '収益', '費用'];
-        typeOrder.forEach(t => { groups[t] = []; });
-        balances.forEach(b => {
-            const t = b.account_type || '費用';
-            if (!groups[t]) groups[t] = [];
-            groups[t].push(b);
-        });
-
-        let html = '';
         let grandDebit = 0, grandCredit = 0;
 
-        typeOrder.forEach(type => {
-            const items = groups[type];
-            if (!items || !items.length) return;
+        let html = `<table class="tb-table">
+            <thead>
+                <tr>
+                    <th>コード</th>
+                    <th>勘定科目</th>
+                    <th>科目区分</th>
+                    <th class="text-right">期首残高</th>
+                    <th class="text-right">借方合計</th>
+                    <th class="text-right">貸方合計</th>
+                    <th class="text-right">残高</th>
+                </tr>
+            </thead>
+            <tbody>`;
 
-            let typeDebit = 0, typeCredit = 0;
-
-            html += `<div class="tb-section">
-                <h3 class="tb-section-title">${type}</h3>
-                <table class="tb-table">
-                    <thead>
-                        <tr>
-                            <th>コード</th>
-                            <th>勘定科目</th>
-                            <th class="text-right">期首残高</th>
-                            <th class="text-right">借方合計</th>
-                            <th class="text-right">貸方合計</th>
-                            <th class="text-right">残高</th>
-                        </tr>
-                    </thead>
-                    <tbody>`;
-
-            items.forEach(b => {
-                typeDebit += b.debit_total;
-                typeCredit += b.credit_total;
-                html += `
-                    <tr class="tb-row" data-account-id="${b.account_id}" style="cursor:pointer;">
-                        <td>${b.code}</td>
-                        <td>${b.name}</td>
-                        <td class="text-right">${fmt(b.opening_balance)}</td>
-                        <td class="text-right">${fmt(b.debit_total)}</td>
-                        <td class="text-right">${fmt(b.credit_total)}</td>
-                        <td class="text-right" style="font-weight:600;">${fmt(b.closing_balance)}</td>
-                    </tr>`;
-            });
-
-            html += `<tr class="tb-subtotal">
-                        <td colspan="3">${type} 合計</td>
-                        <td class="text-right">${fmt(typeDebit)}</td>
-                        <td class="text-right">${fmt(typeCredit)}</td>
-                        <td></td>
-                    </tr>
-                    </tbody></table></div>`;
-
-            grandDebit += typeDebit;
-            grandCredit += typeCredit;
+        balances.forEach(b => {
+            grandDebit += b.debit_total;
+            grandCredit += b.credit_total;
+            html += `
+                <tr class="tb-row" data-account-id="${b.account_id}" style="cursor:pointer;">
+                    <td>${b.code}</td>
+                    <td>${b.name}</td>
+                    <td>${b.account_type}</td>
+                    <td class="text-right">${fmt(b.opening_balance)}</td>
+                    <td class="text-right">${fmt(b.debit_total)}</td>
+                    <td class="text-right">${fmt(b.credit_total)}</td>
+                    <td class="text-right" style="font-weight:600;">${fmt(b.closing_balance)}</td>
+                </tr>`;
         });
+
+        html += `</tbody></table>`;
 
         // Grand total
         html += `<div class="tb-grand-total">
@@ -830,7 +805,222 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ============================================================
-    //  Section 11: Keyboard Shortcuts
+    //  Section 11: Tab 5 — 貸借対照表 (Balance Sheet)
+    // ============================================================
+    const bsStartInput = document.getElementById('bs-start');
+    const bsEndInput = document.getElementById('bs-end');
+    const bsApplyBtn = document.getElementById('bs-apply');
+    const bsContent = document.getElementById('bs-content');
+
+    bsStartInput.value = fy.start;
+    bsEndInput.value = fy.end;
+
+    bsApplyBtn.addEventListener('click', loadBalanceSheet);
+
+    async function loadBalanceSheet() {
+        const params = new URLSearchParams();
+        if (bsStartInput.value) params.set('start_date', bsStartInput.value);
+        if (bsEndInput.value) params.set('end_date', bsEndInput.value);
+
+        try {
+            const data = await fetchAPI('/api/trial-balance?' + params.toString());
+            renderBalanceSheet(data.balances || []);
+        } catch (err) {
+            showToast('貸借対照表の読み込みに失敗しました', true);
+        }
+    }
+
+    function renderBalanceSheet(balances) {
+        const assets = balances.filter(b => b.account_type === '資産');
+        const liabilities = balances.filter(b => b.account_type === '負債');
+        const equity = balances.filter(b => b.account_type === '純資産');
+
+        if (!assets.length && !liabilities.length && !equity.length) {
+            bsContent.innerHTML = '<p style="text-align:center;color:var(--text-muted);padding:2rem;">データがありません</p>';
+            return;
+        }
+
+        const assetTotal = assets.reduce((s, b) => s + b.closing_balance, 0);
+        const liabilityTotal = liabilities.reduce((s, b) => s + b.closing_balance, 0);
+        const equityTotal = equity.reduce((s, b) => s + b.closing_balance, 0);
+        const rightTotal = liabilityTotal + equityTotal;
+
+        function buildRows(items) {
+            return items.map(b => `
+                <tr class="clickable" data-account-id="${b.account_id}">
+                    <td>${b.code}</td>
+                    <td>${b.name}</td>
+                    <td class="text-right">${fmt(b.closing_balance)}</td>
+                </tr>`).join('');
+        }
+
+        let html = '<div class="bs-container">';
+
+        // LEFT: 資産の部
+        html += `<div class="bs-side">
+            <div class="bs-side-title">資産の部</div>
+            <table class="bs-table">
+                <thead><tr><th>コード</th><th>勘定科目</th><th class="text-right">残高</th></tr></thead>
+                <tbody>
+                    ${buildRows(assets)}
+                    <tr class="bs-grand-total">
+                        <td colspan="2">資産合計</td>
+                        <td class="text-right">${fmt(assetTotal)}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>`;
+
+        // RIGHT: 負債・純資産の部
+        html += `<div class="bs-side">
+            <div class="bs-side-title">負債・純資産の部</div>
+            <table class="bs-table">
+                <thead><tr><th>コード</th><th>勘定科目</th><th class="text-right">残高</th></tr></thead>
+                <tbody>
+                    ${buildRows(liabilities)}
+                    <tr class="bs-subtotal">
+                        <td colspan="2">負債合計</td>
+                        <td class="text-right">${fmt(liabilityTotal)}</td>
+                    </tr>
+                    ${buildRows(equity)}
+                    <tr class="bs-subtotal">
+                        <td colspan="2">純資産合計</td>
+                        <td class="text-right">${fmt(equityTotal)}</td>
+                    </tr>
+                    <tr class="bs-grand-total">
+                        <td colspan="2">負債・純資産合計</td>
+                        <td class="text-right">${fmt(rightTotal)}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>`;
+
+        html += '</div>';
+
+        // Balance check
+        const isBalanced = assetTotal === rightTotal;
+        html += `<div class="bs-balance-check ${isBalanced ? 'balanced' : 'unbalanced'}">
+            ${isBalanced
+                ? '✓ 貸借一致 (資産 = 負債 + 純資産)'
+                : `✗ 貸借不一致: 資産 ${fmt(assetTotal)} ≠ 負債+純資産 ${fmt(rightTotal)} (差額: ${fmt(assetTotal - rightTotal)})`
+            }
+        </div>`;
+
+        bsContent.innerHTML = html;
+
+        // Drill-down
+        bsContent.querySelectorAll('.clickable').forEach(row => {
+            row.addEventListener('click', () => {
+                const accId = row.dataset.accountId;
+                jbAccountSelect.value = accId;
+                jbStartInput.value = bsStartInput.value;
+                jbEndInput.value = bsEndInput.value;
+                jbPage = 1;
+                location.hash = 'journal-book';
+                switchTab('journal-book');
+            });
+        });
+    }
+
+    // ============================================================
+    //  Section 12: Tab 6 — 損益計算書 (Profit & Loss)
+    // ============================================================
+    const plStartInput = document.getElementById('pl-start');
+    const plEndInput = document.getElementById('pl-end');
+    const plApplyBtn = document.getElementById('pl-apply');
+    const plContent = document.getElementById('pl-content');
+
+    plStartInput.value = fy.start;
+    plEndInput.value = fy.end;
+
+    plApplyBtn.addEventListener('click', loadProfitLoss);
+
+    async function loadProfitLoss() {
+        const params = new URLSearchParams();
+        if (plStartInput.value) params.set('start_date', plStartInput.value);
+        if (plEndInput.value) params.set('end_date', plEndInput.value);
+
+        try {
+            const data = await fetchAPI('/api/trial-balance?' + params.toString());
+            renderProfitLoss(data.balances || []);
+        } catch (err) {
+            showToast('損益計算書の読み込みに失敗しました', true);
+        }
+    }
+
+    function renderProfitLoss(balances) {
+        const revenues = balances.filter(b => b.account_type === '収益');
+        const expenses = balances.filter(b => b.account_type === '費用');
+
+        if (!revenues.length && !expenses.length) {
+            plContent.innerHTML = '<p style="text-align:center;color:var(--text-muted);padding:2rem;">データがありません</p>';
+            return;
+        }
+
+        const revenueTotal = revenues.reduce((s, b) => s + b.closing_balance, 0);
+        const expenseTotal = expenses.reduce((s, b) => s + b.closing_balance, 0);
+        const netIncome = revenueTotal - expenseTotal;
+
+        function buildSection(title, items, subtotalLabel, subtotal) {
+            let html = `<div class="pl-section">
+                <div class="pl-section-title">${title}</div>
+                <table class="pl-table">
+                    <thead><tr>
+                        <th>コード</th>
+                        <th>勘定科目</th>
+                        <th class="text-right">借方合計</th>
+                        <th class="text-right">貸方合計</th>
+                        <th class="text-right">金額</th>
+                    </tr></thead>
+                    <tbody>`;
+
+            items.forEach(b => {
+                html += `<tr class="clickable" data-account-id="${b.account_id}">
+                    <td>${b.code}</td>
+                    <td>${b.name}</td>
+                    <td class="text-right">${fmt(b.debit_total)}</td>
+                    <td class="text-right">${fmt(b.credit_total)}</td>
+                    <td class="text-right" style="font-weight:600;">${fmt(b.closing_balance)}</td>
+                </tr>`;
+            });
+
+            html += `<tr class="pl-subtotal">
+                    <td colspan="4">${subtotalLabel}</td>
+                    <td class="text-right">${fmt(subtotal)}</td>
+                </tr>
+                </tbody></table></div>`;
+            return html;
+        }
+
+        let html = '';
+        html += buildSection('収益の部', revenues, '収益合計', revenueTotal);
+        html += buildSection('費用の部', expenses, '費用合計', expenseTotal);
+
+        // Net income/loss
+        const isProfit = netIncome >= 0;
+        html += `<div class="pl-net-income ${isProfit ? 'profit' : 'loss'}">
+            <span>${isProfit ? '当期純利益' : '当期純損失'}</span>
+            <span>${fmt(Math.abs(netIncome))}</span>
+        </div>`;
+
+        plContent.innerHTML = html;
+
+        // Drill-down
+        plContent.querySelectorAll('.clickable').forEach(row => {
+            row.addEventListener('click', () => {
+                const accId = row.dataset.accountId;
+                jbAccountSelect.value = accId;
+                jbStartInput.value = plStartInput.value;
+                jbEndInput.value = plEndInput.value;
+                jbPage = 1;
+                location.hash = 'journal-book';
+                switchTab('journal-book');
+            });
+        });
+    }
+
+    // ============================================================
+    //  Section 13: Keyboard Shortcuts
     // ============================================================
     document.addEventListener('keydown', (e) => {
         // Ctrl+Enter to submit journal form when in Tab 1

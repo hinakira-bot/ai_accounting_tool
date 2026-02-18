@@ -24,6 +24,8 @@
                 <button class="tab-btn" data-tab="scan">証憑読み取り</button>
                 <button class="tab-btn" data-tab="journal-book">仕訳帳</button>
                 <button class="tab-btn" data-tab="trial-balance">残高一覧表</button>
+                <button class="tab-btn" data-tab="balance-sheet">貸借対照表</button>
+                <button class="tab-btn" data-tab="profit-loss">損益計算書</button>
             </nav>
             <div class="header-right">
                 <button id="settings-btn" class="icon-btn" title="設定" style="display:none;">
@@ -222,6 +224,36 @@
                         <button id="tb-apply" class="btn btn-sm btn-primary">表示</button>
                     </div>
                     <div id="tb-content"></div>
+                </div>
+            </section>
+
+            <!-- Tab 5: 貸借対照表 -->
+            <section id="tab-balance-sheet" class="tab-panel">
+                <div class="card">
+                    <h2 class="card-title">貸借対照表</h2>
+                    <div class="filter-bar">
+                        <label>期間:</label>
+                        <input type="date" id="bs-start" class="filter-input">
+                        <span class="filter-sep">〜</span>
+                        <input type="date" id="bs-end" class="filter-input">
+                        <button id="bs-apply" class="btn btn-sm btn-primary">表示</button>
+                    </div>
+                    <div id="bs-content"></div>
+                </div>
+            </section>
+
+            <!-- Tab 6: 損益計算書 -->
+            <section id="tab-profit-loss" class="tab-panel">
+                <div class="card">
+                    <h2 class="card-title">損益計算書</h2>
+                    <div class="filter-bar">
+                        <label>期間:</label>
+                        <input type="date" id="pl-start" class="filter-input">
+                        <span class="filter-sep">〜</span>
+                        <input type="date" id="pl-end" class="filter-input">
+                        <button id="pl-apply" class="btn btn-sm btn-primary">表示</button>
+                    </div>
+                    <div id="pl-content"></div>
                 </div>
             </section>
 

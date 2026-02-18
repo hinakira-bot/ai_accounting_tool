@@ -752,8 +752,153 @@ td .edit-input {
 .edit-save { color: var(--success) !important; font-weight: bold; }
 .edit-cancel { color: var(--danger) !important; }
 
+/* === Balance Sheet (BS) - Two Column Layout === */
+.bs-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    margin-top: 1rem;
+}
+
+.bs-side { min-width: 0; }
+
+.bs-side-title {
+    font-size: 0.875rem;
+    font-weight: 700;
+    color: #1e40af;
+    padding: 0.625rem 0.75rem;
+    background: #eff6ff;
+    border-bottom: 2px solid #bfdbfe;
+    margin-bottom: 0;
+}
+
+.bs-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8125rem;
+}
+
+.bs-table th {
+    text-align: left;
+    padding: 0.375rem 0.625rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--text-secondary);
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+}
+
+.bs-table td {
+    padding: 0.375rem 0.625rem;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.bs-table tr.clickable:hover {
+    background: #eff6ff;
+    cursor: pointer;
+}
+
+tr.bs-subtotal {
+    font-weight: 600;
+    background: var(--bg);
+}
+tr.bs-subtotal td { border-top: 2px solid var(--border); }
+
+tr.bs-grand-total {
+    font-weight: 700;
+    background: #eff6ff;
+}
+tr.bs-grand-total td {
+    border-top: 3px double var(--border);
+    padding: 0.625rem;
+    font-size: 0.875rem;
+    color: #1e40af;
+}
+
+.bs-balance-check {
+    text-align: center;
+    padding: 0.75rem;
+    margin-top: 1rem;
+    border-radius: var(--radius);
+    font-weight: 600;
+    font-size: 0.875rem;
+}
+.bs-balance-check.balanced {
+    background: #f0fdf4;
+    color: #16a34a;
+    border: 1px solid #bbf7d0;
+}
+.bs-balance-check.unbalanced {
+    background: #fef2f2;
+    color: #dc2626;
+    border: 1px solid #fecaca;
+}
+
+/* === Profit & Loss (PL) === */
+.pl-section { margin-bottom: 1.5rem; }
+
+.pl-section-title {
+    font-size: 0.875rem;
+    font-weight: 700;
+    color: #1e40af;
+    padding: 0.625rem 0.75rem;
+    background: #eff6ff;
+    border-bottom: 2px solid #bfdbfe;
+}
+
+.pl-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8125rem;
+    margin-bottom: 0.5rem;
+}
+
+.pl-table th {
+    text-align: left;
+    padding: 0.375rem 0.625rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--text-secondary);
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+}
+
+.pl-table td {
+    padding: 0.375rem 0.625rem;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.pl-table tr.clickable:hover {
+    background: #eff6ff;
+    cursor: pointer;
+}
+
+tr.pl-subtotal {
+    font-weight: 600;
+    background: var(--bg);
+}
+tr.pl-subtotal td { border-top: 2px solid var(--border); }
+
+.pl-net-income {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 0.75rem;
+    margin-top: 0.5rem;
+    border-top: 3px double var(--border);
+    font-size: 1rem;
+    font-weight: 700;
+}
+.pl-net-income.profit { color: #16a34a; }
+.pl-net-income.loss { color: #dc2626; }
+
 /* === Responsive === */
 @media (max-width: 768px) {
+    .bs-container { grid-template-columns: 1fr; }
     .app-header { flex-wrap: wrap; height: auto; padding: 0.5rem 1rem; }
     .tab-nav { order: 3; width: 100%; overflow-x: auto; }
     .tab-btn { padding: 0 0.75rem; height: 40px; font-size: 0.75rem; }
